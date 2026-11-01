@@ -1,10 +1,12 @@
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart'
-    show ReplyInfo, DetailListReply, Mode;
+    show ReplyInfo, DetailListReply;
 import 'package:PiliPlus/grpc/reply.dart';
 import 'package:PiliPlus/http/loading_state.dart';
+import 'package:PiliPlus/models/common/reply/reply_sort_type.dart';
 import 'package:PiliPlus/models_new/dynamic/dyn_mention/item.dart';
 import 'package:PiliPlus/pages/common/publish/publish_route.dart';
-import 'package:PiliPlus/pages/common/reply_controller.dart';
+import 'package:PiliPlus/pages/common/reply/fold/reply_fold_mixin.dart';
+import 'package:PiliPlus/pages/common/reply/reply_controller.dart';
 import 'package:PiliPlus/pages/video/reply_new/view.dart';
 import 'package:PiliPlus/pages/video/reply_reply/reply_tree.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
@@ -13,11 +15,13 @@ import 'package:extended_nested_scroll_view/extended_nested_scroll_view.dart';
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:get/get.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 class VideoReplyReplyController extends ReplyController
-    with GetSingleTickerProviderStateMixin {
+    with
+        GetSingleTickerProviderStateMixin,
+        ReplyLocateMixin,
+        BaseReplyFoldMixin {
   VideoReplyReplyController({
     required this.hasRoot,
     required this.id,
@@ -31,9 +35,11 @@ class VideoReplyReplyController extends ReplyController
   final int? dialog;
   int? id;
   // 视频aid 请求时使用的oid
+  @override
   int oid;
   // rpid 请求楼中楼回复
   int rpid;
+  @override
   int replyType;
 
   /// 继承自父面板的被屏蔽评论数据（rpid → ReplyInfo）
@@ -57,11 +63,11 @@ class VideoReplyReplyController extends ReplyController
 
   /// 树输入：有效 flat（保留被屏蔽 + 合成缺失父）+ suppressed 映射
   ({List<ReplyInfo> flat, Map<Int64, ReplySuppressReason> suppressed})
-      get treeInput => buildTreeInput(
-            replies: subtreeData,
-            removed: _removedReplies,
-            rootId: Int64(rpid),
-          );
+  get treeInput => buildTreeInput(
+    replies: subtreeData,
+    removed: _removedReplies,
+    rootId: Int64(rpid),
+  );
 
   /// 已收集的被屏蔽评论（rpid → ReplyInfo），供子面板继承
   Map<Int64, ReplyInfo> get blockedReplies => _removedReplies;
@@ -88,23 +94,17 @@ class VideoReplyReplyController extends ReplyController
     }
   }
 
-  AnimationController? _controller;
-  AnimationController get animController => _controller ??= AnimationController(
-    duration: const Duration(milliseconds: 1000),
-    vsync: this,
-  );
-
   late final horizontalPreview = Pref.horizontalPreview;
 
   @override
   dynamic get sourceId => replyType == 1 ? IdUtils.av2bv(oid) : oid;
 
   @override
+  ReplySortType get prefSortType => Pref.reply2SortType;
+
+  @override
   void onInit() {
     super.onInit();
-    final cacheSortType = Pref.reply2SortType;
-    sortType.value = cacheSortType;
-    mode = cacheSortType == .time ? Mode.MAIN_LIST_TIME : Mode.MAIN_LIST_HOT;
     // 父面板已过滤掉被屏蔽评论，这里继承其收集结果以重建占位
     if (removedReplies case final removedReplies?) {
       _removedReplies.addAll(removedReplies);
@@ -143,6 +143,8 @@ class VideoReplyReplyController extends ReplyController
         setIndexById(Int64(id!), data.root.replies);
         id = null;
       }
+
+      getFoldCard(data.mixedCards);
     }
 
     return false;
@@ -188,7 +190,7 @@ class VideoReplyReplyController extends ReplyController
   @pragma('vm:notify-debugger-on-exception')
   void jumpToItem(int index) {
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      animController.forward(from: 0);
+      colorAnimController.forward(from: 0);
       try {
         // ignore: invalid_use_of_visible_for_testing_member
         final offset = listController.getOffsetToReveal(index, 0.25);
@@ -252,6 +254,7 @@ class VideoReplyReplyController extends ReplyController
 
   /// 正在补全本楼层（一次一页）时为 true
   final isCompletingFloor = false.obs;
+
   /// 已加载的楼层**唯一条数**（去重后，与 [count] 同量纲；便于 Obx 订阅）
   final floorLoaded = 0.obs;
   bool _completing = false;
@@ -281,9 +284,8 @@ class VideoReplyReplyController extends ReplyController
         // 而热排序下边界条目会跨页重复返回（见 dedupeRepliesById）。
         // 用原始长度会涨得比真实条数快，从而提前满足 `>= floorTotal` 而静默丢评论——
         // 正是本功能要消灭的那种失败。
-        final loaded = dedupeRepliesById(
-          loadingState.value.data ?? const [],
-        ).length;
+        final loaded = dedupeRepliesById(loadingState.value.data ?? const [])
+            .length;
         floorLoaded.value = loaded;
         if (decideFloorLoad(
               floorTotal: total,
@@ -400,13 +402,6 @@ class VideoReplyReplyController extends ReplyController
   @override
   void onClose() {
     cancelFloorCompletion();
-    _controller?.dispose();
-    _controller = null;
-    // 必须是 super.onClose()：继承链上唯一的 dispose() 是 get 包的
-    // ListNotifierMixin.dispose，它不向上链式调用，导致 CommonController 的
-    // scrollController.dispose() 与 ReplyController 的 savedReplies.clear()
-    // 从不执行。onClose() 由 _onDelete() 触发且有 _isClosed 守卫，恰好一次，
-    // 改成 super.onClose() 不会双重释放。
     super.onClose();
   }
 }
