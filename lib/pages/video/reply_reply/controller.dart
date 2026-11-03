@@ -126,10 +126,9 @@ class VideoReplyReplyController extends ReplyController
   bool customHandleResponse(bool isRefresh, Success response) {
     final data = response.response;
 
-    subjectControl = data.subjectControl;
-    upMid ??= data.subjectControl.upMid;
-    paginationReply = data.paginationReply;
-    isEnd = data.cursor.isEnd;
+    if (isRefresh) {
+      haneleSubjectControl(data.subjectControl);
+    }
 
     if (data is DetailListReply) {
       if (isRefresh) {
@@ -146,6 +145,11 @@ class VideoReplyReplyController extends ReplyController
 
       getFoldCard(data.mixedCards);
     }
+
+    hanelePagination(
+      cursor: data.cursor,
+      offset: data.paginationReply.nextOffset,
+    );
 
     return false;
   }
@@ -213,7 +217,7 @@ class VideoReplyReplyController extends ReplyController
             oid: oid,
             root: rpid,
             dialog: dialog!,
-            offset: paginationReply?.nextOffset,
+            offset: nextOffset,
           )
         : ReplyGrpc.detailList(
             type: replyType,
@@ -221,7 +225,7 @@ class VideoReplyReplyController extends ReplyController
             root: rpid,
             rpid: id ?? 0,
             mode: mode,
-            offset: paginationReply?.nextOffset,
+            offset: nextOffset,
             removedOut: _removedReplies,
           );
   }
@@ -234,7 +238,7 @@ class VideoReplyReplyController extends ReplyController
     // 刷新前清空上一轮收集的被屏蔽评论，请求返回后 detailList 重新收集
     _removedReplies.clear();
     // super 链（ReplyController → CommonListController）负责重置
-    // paginationReply / cursorNext / subjectControl / page，并以 isRefresh=true 取数
+    // nextOffset / subjectControl / page，并以 isRefresh=true 取数
     return super.onRefresh();
   }
 
@@ -296,14 +300,14 @@ class VideoReplyReplyController extends ReplyController
             FloorLoad.done) {
           break;
         }
-        final beforeOffset = paginationReply?.nextOffset;
+        final beforeOffset = nextOffset;
         await queryData(false);
         floorLoaded.value = dedupeRepliesById(
           loadingState.value.data ?? const [],
         ).length;
         if (!_completing) break;
         // 用真实“游标是否推进”重算一次，避免空转
-        final advanced = paginationReply?.nextOffset != beforeOffset;
+        final advanced = nextOffset != beforeOffset;
         if (decideFloorLoad(
               floorTotal: count.value,
               floorLoaded: floorLoaded.value,

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:PiliPlus/grpc/bilibili/main/community/reply/v1.pb.dart';
+import 'package:PiliPlus/grpc/bilibili/pagination.pb.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/reply/reply_sort_type.dart';
 import 'package:PiliPlus/pages/video/reply_reply/controller.dart';
@@ -27,6 +28,45 @@ class _Controller extends VideoReplyReplyController {
     requests++;
   }
 }
+
+class _PagingController extends VideoReplyReplyController {
+  _PagingController(this.responses)
+    : super(
+        hasRoot: false,
+        id: null,
+        oid: 1,
+        rpid: 2,
+        dialog: null,
+        replyType: 1,
+      );
+
+  final List<LoadingState<DetailListReply>> responses;
+  final requestedOffsets = <String?>[];
+
+  @override
+  Future<LoadingState<DetailListReply>> customGetData() async {
+    requestedOffsets.add(nextOffset);
+    return responses.removeAt(0);
+  }
+}
+
+Success<DetailListReply> _page(
+  List<int> ids, {
+  required String offset,
+  bool isEnd = false,
+}) => Success(
+  DetailListReply(
+    root: ReplyInfo(
+      id: Int64(2),
+      count: Int64(10),
+      replies: ids.map(
+        (id) => ReplyInfo(id: Int64(id), parent: Int64(2), root: Int64(2)),
+      ),
+    ),
+    cursor: CursorReply(isEnd: isEnd),
+    paginationReply: FeedPaginationReply(nextOffset: offset),
+  ),
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -110,6 +150,72 @@ void main() {
     await controller.onRefresh();
 
     expect(controller.foldCard, isNull);
+    expect(controller.loadMoreError.value, isNull);
+  });
+
+  test('floor completion follows offsets through empty reply pages', () async {
+    final controller = _PagingController([
+      _page([3], offset: 'page-2'),
+      _page([], offset: 'page-3'),
+      _page([4], offset: 'page-4'),
+      _page([5], offset: '', isEnd: true),
+    ]);
+    addTearDown(controller.onClose);
+
+    await controller.queryData();
+    await controller.ensureFloorComplete();
+
+    expect(controller.requestedOffsets, [null, 'page-2', 'page-3', 'page-4']);
+    expect(
+      controller.loadingState.value.data!.map((reply) => reply.id.toInt()),
+      [
+        3,
+        4,
+        5,
+      ],
+    );
+    expect(controller.floorLoaded.value, 3);
+    expect(controller.isFloorComplete, isTrue);
+    expect(controller.isCompletingFloor.value, isFalse);
+    expect(controller.loadMoreError.value, isNull);
+  });
+
+  test(
+    'empty pagination offset ends loading even without cursor end',
+    () async {
+      final controller = _PagingController([
+        _page([3], offset: ''),
+      ]);
+      addTearDown(controller.onClose);
+
+      await controller.queryData();
+      await controller.ensureFloorComplete();
+
+      expect(controller.requestedOffsets, [null]);
+      expect(controller.isFloorComplete, isTrue);
+    },
+  );
+
+  test('refresh restarts pagination after a load-more failure', () async {
+    final controller = _PagingController([
+      _page([3], offset: 'page-2'),
+      const Error('加载失败'),
+      _page([6], offset: 'new-page-2'),
+    ]);
+    addTearDown(controller.onClose);
+
+    await controller.queryData();
+    await controller.onLoadMore();
+
+    expect(controller.loadMoreError.value, '加载失败');
+    expect(controller.nextOffset, 'page-2');
+    expect(controller.loadingState.value.data!.single.id, Int64(3));
+
+    await controller.onRefresh();
+
+    expect(controller.requestedOffsets, [null, 'page-2', null]);
+    expect(controller.nextOffset, 'new-page-2');
+    expect(controller.loadingState.value.data!.single.id, Int64(6));
     expect(controller.loadMoreError.value, isNull);
   });
 }
