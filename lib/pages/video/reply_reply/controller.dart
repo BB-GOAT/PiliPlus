@@ -127,7 +127,7 @@ class VideoReplyReplyController extends ReplyController
     final data = response.response;
 
     if (isRefresh) {
-      haneleSubjectControl(data.subjectControl);
+      handleSubjectControl(data.subjectControl);
     }
 
     if (data is DetailListReply) {
@@ -146,12 +146,29 @@ class VideoReplyReplyController extends ReplyController
       getFoldCard(data.mixedCards);
     }
 
-    hanelePagination(
+    handlePagination(
       cursor: data.cursor,
       offset: data.paginationReply.nextOffset,
     );
 
     return false;
+  }
+
+  Iterable<ReplyInfo> getParentChain(int index, ReplyInfo? firstFloor) {
+    final data = loadingState.value.data!;
+    final item = data[index];
+    final replies = [item];
+    for (var i = index - 1, parent = item.parent; i >= 0; i--) {
+      final item = data[i];
+      if (item.id == parent) {
+        replies.add(item);
+        parent = item.parent;
+      }
+    }
+    if (firstFloor != null && firstFloor.id != replies.last.id) {
+      replies.add(firstFloor);
+    }
+    return replies.reversed;
   }
 
   bool setIndexById(Int64 id64, [List<ReplyInfo>? replies]) {

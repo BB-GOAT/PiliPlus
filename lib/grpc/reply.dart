@@ -129,8 +129,13 @@ abstract final class ReplyGrpc {
     );
     if (res case Success(:final response)) {
       // keyword filter
-      if (response.hasUpTop() && needRemoveGrpc(response.upTop)) {
-        response.clearUpTop();
+      if (response.hasUpTop()) {
+        final topReply = response.upTop;
+        if (needRemoveGrpc(topReply)) {
+          response.clearUpTop();
+        } else {
+          topReply.replies.removeWhere(needRemoveGrpc);
+        }
       }
 
       if (response.replies.isNotEmpty) {
@@ -141,6 +146,19 @@ abstract final class ReplyGrpc {
           }
           return hasMatch;
         });
+      }
+
+      if (response.replies.isEmpty && !response.hasUpTop()) {
+        final offset = response.paginationReply.nextOffset;
+        if (offset.isNotEmpty && !response.cursor.isEnd) {
+          return mainList(
+            type: type,
+            oid: oid,
+            rpid: rpid,
+            mode: mode,
+            offset: offset,
+          );
+        }
       }
     }
     return res;
@@ -168,11 +186,12 @@ abstract final class ReplyGrpc {
       ),
       DetailListReply.fromBuffer,
     );
-    return res..dataOrNull?.root.replies.removeWhere((reply) {
-      final removed = needRemoveGrpc(reply);
-      if (removed) removedOut?[reply.id] = reply;
-      return removed;
-    });
+    return res
+      ..dataOrNull?.root.replies.removeWhere((reply) {
+        final removed = needRemoveGrpc(reply);
+        if (removed) removedOut?[reply.id] = reply;
+        return removed;
+      });
   }
 
   static Future<LoadingState<FoldListResp>> foldList({
